@@ -1,107 +1,229 @@
-# Webhook Auto Deploy System
+# Webhook API Documentation
 
-Hệ thống webhook tự động deploy được viết bằng Go, tích hợp với Discord notifications.
+## Overview
+This webhook service handles automated deployments for multiple types of projects (Go, Node.js, Python, PHP, Java, .NET, Docker) through GitHub webhooks. The service is deployed at `https://webhook1.iceteadev.site/` via Cloudflare Tunnel.
 
-## 🚀 Tính năng
+## Authentication
+All webhook requests must include:
+- GitHub webhook signature (`X-Hub-Signature-256` header)
+- Valid GitHub IP address (automatically verified)
 
-- ✅ Nhận webhook từ GitHub/GitLab
-- ✅ Xác thực HMAC SHA-256 signature
-- ✅ Kiểm soát IP whitelist
-- ✅ Thực thi lệnh deploy tự động
-- ✅ Gửi thông báo Discord với embed đẹp
-- ✅ Logging chi tiết
-- ✅ Health check endpoint
-- ✅ Rate limiting middleware
-- ✅ Xử lý bất đồng bộ
+## Endpoint
 
-## 📋 Yêu cầu
-
-- Go 1.21 hoặc cao hơn
-- Git (để thực thi lệnh git pull)
-- Docker (tùy chọn)
-
-## ⚙️ Cài đặt
-
-### 1. Clone repository
-
-```bash
-git clone <your-repo-url>
-cd webhook-deploy
+```
+POST https://webhook1.iceteadev.site/
 ```
 
-### 2. Cấu hình biến môi trường
-
-```bash
-cp config.env.example config.env
-```
-
-Chỉnh sửa file `config.env`:
-
-```env
-PORT=8300
-WEBHOOK_SECRET=your_very_secure_secret_here
-DISCORD_WEBHOOK=https://discord.com/api/webhooks/YOUR_WEBHOOK_URL
-ALLOWED_IPS=192.30.252.0/22,185.199.108.0/22
-```
-
-### 3. Chạy ứng dụng
-
-#### Với Go native:
-
-```bash
-# Tải dependencies
-go mod tidy
-
-# Chạy ứng dụng
-source config.env && go run main.go
-```
-
-#### Với Docker:
-
-```bash
-# Build image
-docker build -t webhook-deploy .
-
-# Chạy container
-docker run -d \
-  --name webhook-deploy \
-  -p 8300:8300 \
-  --env-file config.env \
-  webhook-deploy
-```
-
-## 🔧 Cấu hình GitHub/GitLab
-
-### GitHub Webhook
-
-1. Vào repository → Settings → Webhooks
-2. Thêm webhook mới:
-   - **Payload URL**: `http://your-server:8300/deploy`
-   - **Content type**: `application/json`
-   - **Secret**: (giống với `WEBHOOK_SECRET`)
-   - **Events**: Push events
-   - **Active**: ✅
-
-### GitLab Webhook
-
-1. Vào project → Settings → Webhooks
-2. Thêm webhook:
-   - **URL**: `http://your-server:8300/deploy`
-   - **Secret Token**: (giống với `WEBHOOK_SECRET`)
-   - **Trigger**: Push events
-   - **SSL verification**: Enable/Disable tùy setup
-
-## 🎯 API Endpoints
-
-### POST /deploy
-Nhận webhook từ Git provider.
-
-**Headers:**
+### Headers
 - `Content-Type: application/json`
-- `X-Hub-Signature-256: sha256=<signature>` (GitHub)
-- `X-GitHub-Signature-256: sha256=<signature>` (GitHub alternative)
+- `X-Hub-Signature-256: sha256=HASH` (HMAC SHA256 signature)
+- `X-GitHub-Event: push` (or other GitHub event types)
 
-**Response:**
+### Request Body
+GitHub webhook payload in JSON format. The service primarily responds to `push` events.
+
+### Response Codes
+- `200 OK`: Webhook processed successfully
+- `400 Bad Request`: Invalid payload or missing headers
+- `401 Unauthorized`: Invalid signature
+- `403 Forbidden`: IP not in allowed range
+- `500 Internal Server Error`: Deployment error
+
+## Project Configuration
+
+Projects are configured through environment variables following this pattern:
+```env
+DEPLOY_COMMANDS_OWNER_REPO_NAME=command1;command2;command3
+WORK_DIR_OWNER_REPO_NAME=/path/to/working/directory
+```
+
+### Example Configuration
+
+For a repository `company/go-api`:
+```env
+DEPLOY_COMMANDS_COMPANY_GO_API=git pull origin main;go mod tidy;go test ./...;go build -o api-server;sudo systemctl restart go-api
+WORK_DIR_COMPANY_GO_API=/opt/go-api
+```
+
+## Setting Up GitHub Webhooks
+
+1. Go to your GitHub repository
+2. Navigate to Settings > Webhooks
+3. Click "Add webhook"
+4. Configure the webhook:
+   - Payload URL: `https://webhook1.iceteadev.site/`
+   - Content type: `application/json`
+   - Secret: Your configured webhook secret
+   - Events: Select "Just the push event"
+   - Active: Check this box
+
+## Supported Project Types
+
+The webhook supports various project types including:
+- Go projects (API, Microservices)
+- Node.js (React, Express, Next.js)
+- Python (Django, Flask, FastAPI)
+- PHP (Laravel, WordPress)
+- Java (Spring Boot, Gradle)
+- .NET Core
+- Docker/Docker Compose
+- Full-stack and Monorepo projects
+
+## Security Considerations
+
+- Only GitHub IP ranges are allowed
+- HMAC SHA256 signature verification
+- Cloudflare Tunnel for secure connectivity
+- Environment-based configuration
+
+## Troubleshooting
+
+If deployments fail, check:
+1. GitHub webhook delivery logs
+2. Webhook server logs
+3. Project-specific deployment logs
+4. Correct environment variable configuration
+5. Working directory permissions
+
+## Example GitHub Actions Integration
+
+```yaml
+name: Deploy via Webhook
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger deployment webhook
+        uses: distributhor/workflow-webhook@v2
+        with:
+          url: https://webhook1.iceteadev.site/
+          secret: ${{ secrets.WEBHOOK_SECRET }}
+```
+
+## Rate Limiting
+
+- Webhook requests are processed sequentially
+- Multiple deployments for the same repository are queued
+- Consider implementing cooldown periods between deployments
+
+## Support
+
+For issues or questions:
+1. Check server logs
+2. Verify GitHub webhook delivery logs
+3. Ensure correct environment configuration
+4. Check project-specific deployment requirements 
+
+## Detailed GitHub Webhook Payload
+
+### Required Headers
+```http
+Content-Type: application/json
+X-Hub-Signature-256: sha256=HASH
+X-GitHub-Event: push
+X-GitHub-Delivery: unique-delivery-id
+User-Agent: GitHub-Hookshot/*
+```
+
+### Example Payload
+```json
+{
+  "ref": "refs/heads/main",
+  "repository": {
+    "name": "project-name",
+    "full_name": "owner/project-name",
+    "html_url": "https://github.com/owner/project-name",
+    "clone_url": "https://github.com/owner/project-name.git",
+    "default_branch": "main"
+  },
+  "pusher": {
+    "name": "username",
+    "email": "user@example.com"
+  },
+  "head_commit": {
+    "id": "6dcb09b5b57875f334f61aebed695e2e4193db5e",
+    "message": "Fix logging issue",
+    "timestamp": "2024-01-15T10:00:00Z",
+    "url": "https://github.com/owner/project-name/commit/6dcb09b5b57875f334f61aebed695e2e4193db5e",
+    "author": {
+      "name": "User Name",
+      "email": "user@example.com"
+    }
+  },
+  "commits": [
+    {
+      "id": "6dcb09b5b57875f334f61aebed695e2e4193db5e",
+      "message": "Fix logging issue",
+      "timestamp": "2024-01-15T10:00:00Z",
+      "url": "https://github.com/owner/project-name/commit/6dcb09b5b57875f334f61aebed695e2e4193db5e",
+      "author": {
+        "name": "User Name",
+        "email": "user@example.com"
+      },
+      "added": ["new-file.txt"],
+      "removed": ["old-file.txt"],
+      "modified": ["modified-file.txt"]
+    }
+  ]
+}
+```
+
+### Important Fields Explanation
+
+1. **Headers:**
+   - `X-Hub-Signature-256`: HMAC SHA256 signature of the payload using your webhook secret
+   - `X-GitHub-Event`: Type of event (e.g., "push", "pull_request")
+   - `X-GitHub-Delivery`: Unique identifier for the delivery
+   - `User-Agent`: Always starts with "GitHub-Hookshot/"
+
+2. **Payload Fields:**
+   - `ref`: Branch or tag that was pushed to (e.g., "refs/heads/main")
+   - `repository`: Information about the repository
+     - `name`: Repository name
+     - `full_name`: Owner and repository name
+     - `html_url`: GitHub URL of the repository
+     - `clone_url`: Git clone URL
+   - `pusher`: Information about who pushed the changes
+   - `head_commit`: Details about the latest commit
+   - `commits`: Array of all commits in this push
+     - `added`: New files added
+     - `removed`: Files removed
+     - `modified`: Files modified
+
+### Testing Webhook Locally
+
+You can use the provided test script:
+
+```bash
+go run test/webhook_test.go https://webhook1.iceteadev.site/ your_webhook_secret
+```
+
+Or use curl:
+
+```bash
+# Generate HMAC SHA256 signature first
+WEBHOOK_SECRET="your_secret"
+PAYLOAD='{"ref":"refs/heads/main","repository":{"name":"test-repo"}}'
+SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | cut -d' ' -f2)
+
+# Send test request
+curl -X POST https://webhook1.iceteadev.site/ \
+  -H "Content-Type: application/json" \
+  -H "X-Hub-Signature-256: sha256=$SIGNATURE" \
+  -H "X-GitHub-Event: push" \
+  -H "X-GitHub-Delivery: test-delivery-id" \
+  -H "User-Agent: GitHub-Hookshot/test" \
+  -d "$PAYLOAD"
+```
+
+### Common Response Codes
+
+1. **Success Response:**
 ```json
 {
   "status": "accepted",
@@ -109,226 +231,26 @@ Nhận webhook từ Git provider.
 }
 ```
 
-### GET /health
-Health check endpoint.
-
-**Response:**
+2. **Error Responses:**
 ```json
+// 400 Bad Request
 {
-  "status": "healthy",
-  "time": "2024-01-15T10:30:00Z"
+  "error": "Invalid payload format"
 }
-```
 
-## 🔒 Bảo mật
-
-### 1. HMAC Signature Verification
-Ứng dụng sử dụng HMAC SHA-256 để xác thực webhook:
-
-```go
-// Header: X-Hub-Signature-256: sha256=<hash>
-func checkSignature(payload []byte, signature, secret string) bool {
-    mac := hmac.New(sha256.New, []byte(secret))
-    mac.Write(payload)
-    expectedMAC := hex.EncodeToString(mac.Sum(nil))
-    return hmac.Equal([]byte(signature), []byte(expectedMAC))
+// 401 Unauthorized
+{
+  "error": "Invalid signature"
 }
-```
 
-### 2. IP Whitelist
-Chỉ cho phép IP từ danh sách được cấu hình:
+// 403 Forbidden
+{
+  "error": "IP not in allowed range"
+}
 
-```env
-ALLOWED_IPS=192.30.252.0/22,185.199.108.0/22,140.82.112.0/20
-```
-
-### 3. GitHub IP Ranges
-GitHub sử dụng các IP ranges sau (cập nhật từ GitHub Meta API):
-- `192.30.252.0/22`
-- `185.199.108.0/22` 
-- `140.82.112.0/20`
-- `143.55.64.0/20`
-
-## 📱 Discord Notifications
-
-Webhook gửi embed message đẹp với thông tin:
-
-- ✅/❌ Trạng thái deploy
-- 📁 Repository name
-- 🌿 Branch name
-- 📝 Commit message
-- 👤 Author
-- 🔗 Commit URL
-- ⏰ Timestamp
-
-## 🛠️ Cấu hình Đa Ngôn ngữ
-
-Webhook **tự động detect** và support đa ngôn ngữ:
-
-### 🔍 Auto-Detection hỗ trợ:
-
-| Ngôn ngữ | File marker | Deploy commands |
-|----------|-------------|-----------------|
-| **Go** | `go.mod`, `main.go` | `go mod tidy` → `go build -o app` |
-| **Node.js** | `package.json` | `npm ci` → `npm run build` |
-| **Python** | `requirements.txt`, `setup.py` | `pip install -r requirements.txt` |
-| **PHP** | `composer.json`, `index.php` | `composer install --no-dev` |
-| **Java** | `pom.xml`, `build.gradle` | `./mvnw clean package` |
-| **.NET** | `*.csproj`, `*.sln` | `dotnet restore` → `dotnet build` |
-| **Docker** | `Dockerfile`, `docker-compose.yml` | `docker build` → `docker-compose up` |
-
-### ⚙️ Custom Commands
-
-#### 1. Global Commands (tất cả repo):
-```env
-DEPLOY_COMMANDS=git pull origin main;npm ci;npm run build;pm2 restart all
-```
-
-#### 2. Repository-specific Commands:
-```env
-# Cho repository "user/my-api"
-DEPLOY_COMMANDS_USER_MY_API=git pull origin main;go build -o api;sudo systemctl restart my-api
-
-# Cho repository "company/frontend"  
-DEPLOY_COMMANDS_COMPANY_FRONTEND=git pull origin main;npm ci;npm run build;sudo systemctl restart nginx
-```
-
-#### 3. Working Directory:
-```env
-# Global working directory
-WORK_DIR=/opt/projects
-
-# Repository-specific
-WORK_DIR_USER_MY_API=/opt/my-api
-WORK_DIR_COMPANY_FRONTEND=/var/www/html
-```
-
-### 📝 Ví dụ cấu hình cho từng ngôn ngữ:
-
-**Node.js API:**
-```env
-DEPLOY_COMMANDS_USER_NODE_API=git pull origin main;npm ci;npm run build;pm2 restart node-api
-WORK_DIR_USER_NODE_API=/opt/node-api
-```
-
-**Python Flask:**
-```env
-DEPLOY_COMMANDS_USER_FLASK_APP=git pull origin main;pip install -r requirements.txt;sudo systemctl restart flask-app
-WORK_DIR_USER_FLASK_APP=/opt/flask-app
-```
-
-**PHP Laravel:**
-```env
-DEPLOY_COMMANDS_USER_LARAVEL=git pull origin main;composer install --no-dev;php artisan cache:clear;sudo systemctl restart nginx
-WORK_DIR_USER_LARAVEL=/var/www/laravel
-```
-
-**Docker Compose:**
-```env
-DEPLOY_COMMANDS_USER_DOCKER_APP=git pull origin main;docker-compose down;docker-compose build;docker-compose up -d
-WORK_DIR_USER_DOCKER_APP=/opt/docker-app
-```
-
-### 🔄 Command Prioritization
-
-Webhook sẽ chọn deploy commands theo thứ tự ưu tiên:
-
-1. **Repository-specific commands** (`DEPLOY_COMMANDS_REPO_NAME`)
-2. **Global custom commands** (`DEPLOY_COMMANDS`) 
-3. **Auto-detected commands** (dựa trên project type)
-
-## 📝 Logging
-
-Ứng dụng ghi log chi tiết:
-
-```
-2024/01/15 10:30:00 [2024-01-15 10:30:00] POST /deploy from 192.30.252.1
-2024/01/15 10:30:00 Received webhook for repository: user/repo, ref: refs/heads/main
-2024/01/15 10:30:00 Starting deployment for user/repo
-2024/01/15 10:30:01 Executing: git pull origin main
-2024/01/15 10:30:02 Command successful: git pull origin main
-2024/01/15 10:30:02 Sending Discord notification...
-2024/01/15 10:30:03 Discord notification sent successfully
-```
-
-## 🐳 Docker Compose
-
-Tạo file `docker-compose.yml`:
-
-```yaml
-version: '3.8'
-services:
-  webhook-deploy:
-    build: .
-    ports:
-      - "8300:8300"
-    environment:
-      - PORT=8300
-      - WEBHOOK_SECRET=your_secret
-      - DISCORD_WEBHOOK=your_discord_url
-      - ALLOWED_IPS=
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock # Nếu cần deploy Docker
-```
-
-## 🔄 Systemd Service
-
-Tạo service để chạy tự động:
-
-```ini
-[Unit]
-Description=Webhook Deploy Service
-After=network.target
-
-[Service]
-Type=simple
-User=webhook
-ExecStart=/opt/webhook-deploy/webhook-deploy
-WorkingDirectory=/opt/webhook-deploy
-Restart=always
-RestartSec=10
-Environment=PORT=8300
-Environment=WEBHOOK_SECRET=your_secret
-Environment=DISCORD_WEBHOOK=your_discord_url
-
-[Install]
-WantedBy=multi-user.target
-```
-
-## 🚨 Troubleshooting
-
-### 1. Signature verification failed
-- Kiểm tra `WEBHOOK_SECRET` khớp với GitHub/GitLab
-- Kiểm tra header `X-Hub-Signature-256`
-
-### 2. Discord notification không gửi được
-- Kiểm tra `DISCORD_WEBHOOK` URL
-- Kiểm tra network connectivity
-
-### 3. Deploy commands thất bại
-- Kiểm tra quyền thực thi
-- Kiểm tra working directory
-- Xem log chi tiết
-
-### 4. Auto-detection không đúng ngôn ngữ
-- Kiểm tra file marker tồn tại (package.json, go.mod, etc.)
-- Thiết lập custom commands với `DEPLOY_COMMANDS_REPO_NAME`
-- Kiểm tra `WORK_DIR` đúng đường dẫn
-
-### 5. Multiple project types detected
-- Webhook sẽ chạy commands cho tất cả types detected
-- Sử dụng custom commands để control chính xác
-- Ví dụ: Project có cả Dockerfile và package.json
-
-## 📞 Hỗ trợ
-
-Nếu gặp vấn đề, vui lòng:
-1. Kiểm tra logs
-2. Kiểm tra cấu hình
-3. Test với `/health` endpoint
-4. Tạo issue trên repository
-
-## 📄 License
-
-MIT License - Xem file LICENSE để biết thêm chi tiết. 
+// 500 Internal Server Error
+{
+  "error": "Deployment failed",
+  "details": "Error executing deployment commands"
+}
+``` 
