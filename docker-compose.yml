@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  webhook-deploy:
+    build: .
+    container_name: webhook-deploy
+    ports:
+      - "8300:8300"
+    environment:
+      - PORT=8300
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-your_secret_here}
+      - DISCORD_WEBHOOK=${DISCORD_WEBHOOK:-https://discord.com/api/webhooks/1393287834173050990/9Mb6VxMhpB_UOqf9HEXkbV85N0sLRIpeGDZqFHuQGiZwjzx_FQzt_Xh-Vg6ozo0PJcCa}
+      - ALLOWED_IPS=${ALLOWED_IPS:-}
+    restart: unless-stopped
+    volumes:
+      # Nếu cần deploy Docker containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Nếu cần truy cập file system để deploy
+      - ./deploy:/deploy:rw
+    networks:
+      - webhook-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8300/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  webhook-network:
+    driver: bridge 
