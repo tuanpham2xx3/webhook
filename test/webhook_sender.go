@@ -1,5 +1,5 @@
-// Test script for webhook
-// Usage: go run test/webhook_test.go <webhook_url> <secret>
+// Webhook test script
+// Usage: go run webhook_sender.go <webhook_url> <secret>
 package main
 
 import (
@@ -34,8 +34,8 @@ type TestPayload struct {
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Println("Usage: go run test/webhook_test.go <webhook_url> <secret>")
-		fmt.Println("Example: go run test/webhook_test.go http://localhost:8300/deploy your_secret_here")
+		fmt.Println("Usage: go run webhook_sender.go <webhook_url> <secret>")
+		fmt.Println("Example: go run webhook_sender.go http://localhost:8300/deploy your_secret_here")
 		os.Exit(1)
 	}
 
@@ -91,13 +91,15 @@ func main() {
 
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Hub-Signature-256", "sha256="+signature)
+	req.Header.Set("X-Hub-Signature-256", signature)
+	req.Header.Set("X-GitHub-Event", "push")
+	req.Header.Set("X-GitHub-Delivery", "test-delivery-id")
 	req.Header.Set("User-Agent", "GitHub-Hookshot/test")
 
 	// Send request
 	fmt.Printf("🔄 Sending test webhook to: %s\n", webhookURL)
 	fmt.Printf("📝 Payload: %s\n", string(jsonData))
-	fmt.Printf("🔐 Signature: sha256=%s\n", signature)
+	fmt.Printf("🔐 Signature: %s\n", signature)
 	fmt.Println("")
 
 	client := &http.Client{}
@@ -116,13 +118,16 @@ func main() {
 	}
 
 	// Print result
-	fmt.Printf("📡 Response Status: %d %s\n", resp.StatusCode, resp.Status)
-	fmt.Printf("📋 Response Body: %s\n", string(body))
+	fmt.Printf("HTTP Status: %d\n", resp.StatusCode)
+	fmt.Printf("Response Body: %s\n", string(body))
 
 	if resp.StatusCode == 200 {
 		fmt.Println("✅ Webhook test successful!")
+		os.Exit(0)
 	} else {
-		fmt.Println("❌ Webhook test failed!")
+		fmt.Println("❌ Webhook deployment failed!")
+		fmt.Printf("HTTP Status: %d\n", resp.StatusCode)
+		fmt.Printf("Response: %s\n", string(body))
 		os.Exit(1)
 	}
 }
@@ -130,5 +135,5 @@ func main() {
 func generateSignature(payload []byte, secret string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(payload)
-	return hex.EncodeToString(mac.Sum(nil))
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }

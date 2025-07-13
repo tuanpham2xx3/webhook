@@ -10,7 +10,6 @@ services:
       - PORT=8300
       - WEBHOOK_SECRET=${WEBHOOK_SECRET:-your_secret_here}
       - DISCORD_WEBHOOK=${DISCORD_WEBHOOK:-https://discord.com/api/webhooks/1393287834173050990/9Mb6VxMhpB_UOqf9HEXkbV85N0sLRIpeGDZqFHuQGiZwjzx_FQzt_Xh-Vg6ozo0PJcCa}
-      - ALLOWED_IPS=${ALLOWED_IPS:-}
     restart: unless-stopped
     volumes:
       # Nếu cần deploy Docker containers

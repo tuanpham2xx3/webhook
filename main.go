@@ -21,7 +21,6 @@ type Config struct {
 	Port           string
 	Secret         string
 	DiscordWebhook string
-	AllowedIPs     []string
 }
 
 type WebhookPayload struct {
@@ -73,7 +72,6 @@ func init() {
 		Port:           getEnv("PORT", "8300"),
 		Secret:         getEnv("WEBHOOK_SECRET", "your_secret_here"),
 		DiscordWebhook: getEnv("DISCORD_WEBHOOK", "https://discord.com/api/webhooks/1393287834173050990/9Mb6VxMhpB_UOqf9HEXkbV85N0sLRIpeGDZqFHuQGiZwjzx_FQzt_Xh-Vg6ozo0PJcCa"),
-		AllowedIPs:     strings.Split(getEnv("ALLOWED_IPS", ""), ","),
 	}
 }
 
@@ -173,16 +171,6 @@ func deployHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func isValidRequest(r *http.Request) bool {
-	// Check allowed IPs if configured
-	if len(config.AllowedIPs) > 0 && config.AllowedIPs[0] != "" {
-		clientIP := getClientIP(r)
-		for _, allowedIP := range config.AllowedIPs {
-			if strings.TrimSpace(allowedIP) == clientIP {
-				return true
-			}
-		}
-		return false
-	}
 	return true
 }
 
