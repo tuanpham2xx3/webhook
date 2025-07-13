@@ -77,7 +77,7 @@ func init() {
 
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
-		return value
+		return strings.TrimSpace(value) // Trim whitespace để tránh lỗi
 	}
 	return defaultValue
 }
