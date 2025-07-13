@@ -83,6 +83,13 @@ func getEnv(key, defaultValue string) string {
 }
 
 func main() {
+	// In ra cấu hình khi start
+	log.Printf("=== WEBHOOK CONFIGURATION ===")
+	log.Printf("Port: %s", config.Port)
+	log.Printf("Secret: %s", config.Secret)
+	log.Printf("Discord Webhook: %s", config.DiscordWebhook)
+	log.Printf("=============================")
+
 	r := mux.NewRouter()
 
 	// Middleware
@@ -202,11 +209,20 @@ func verifySignature(r *http.Request, body []byte) bool {
 		return false
 	}
 
-	return checkSignature(body, signature, config.Secret)
+	log.Printf("=== SIGNATURE VERIFICATION ===")
+	log.Printf("Received signature: %s", signature)
+	log.Printf("Using secret: %s", config.Secret)
+	log.Printf("Payload length: %d bytes", len(body))
+	result := checkSignature(body, signature, config.Secret)
+	log.Printf("Verification result: %t", result)
+	log.Printf("===============================")
+
+	return result
 }
 
 func checkSignature(payload []byte, signature, secret string) bool {
 	// Remove "sha256=" prefix if present
+	originalSignature := signature
 	if strings.HasPrefix(signature, "sha256=") {
 		signature = signature[7:]
 	}
@@ -214,6 +230,11 @@ func checkSignature(payload []byte, signature, secret string) bool {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(payload)
 	expectedMAC := hex.EncodeToString(mac.Sum(nil))
+
+	log.Printf("Original signature: %s", originalSignature)
+	log.Printf("Cleaned signature: %s", signature)
+	log.Printf("Expected signature: sha256=%s", expectedMAC)
+	log.Printf("Signatures match: %t", hmac.Equal([]byte(signature), []byte(expectedMAC)))
 
 	return hmac.Equal([]byte(signature), []byte(expectedMAC))
 }
