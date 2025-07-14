@@ -310,20 +310,25 @@ func executeDeployment(payload WebhookPayload) bool {
 		log.Printf("Environment: %s", payload.Deployment.Environment)
 
 		// Use custom Docker commands for workflow payloads
+		// Extract container name from repository (remove owner prefix)
+		repoName := payload.Repository.Name // mrs_address_be
+		containerName := repoName
+		log.Printf("Container Name: %s", containerName)
+
 		dockerCommands := []string{
 			payload.Docker.PullCommand,
-			fmt.Sprintf("docker stop %s", payload.Docker.ImageName),
-			fmt.Sprintf("docker rm %s", payload.Docker.ImageName),
+			fmt.Sprintf("docker stop %s", containerName),
+			fmt.Sprintf("docker rm %s", containerName),
 		}
 
 		// Add run command based on environment
 		var runCommand string
 		if payload.Deployment.Environment == "production" {
 			runCommand = fmt.Sprintf("docker run -d --name %s -p 8100:8100 %s",
-				payload.Docker.ImageName, payload.Docker.LatestImage)
+				containerName, payload.Docker.LatestImage)
 		} else {
 			runCommand = fmt.Sprintf("docker run -d --name %s-staging -p 8101:8100 %s",
-				payload.Docker.ImageName, payload.Docker.LatestImage)
+				containerName, payload.Docker.LatestImage)
 		}
 		dockerCommands = append(dockerCommands, runCommand)
 
