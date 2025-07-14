@@ -9,8 +9,8 @@ export PORT=8300
 export WEBHOOK_SECRET="your_webhook_secret_here"
 export DISCORD_WEBHOOK="https://discord.com/api/webhooks/your_webhook_url"
 
-# Global working directory (optional)
-export WORK_DIR=/opt/projects
+# Global working directory (only needed for non-Docker projects)
+# export WORK_DIR=/path/to/your/project
 ```
 
 ### Project-Specific Configuration

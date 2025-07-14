@@ -63,8 +63,8 @@ PORT=8300
 WEBHOOK_SECRET=your_secret_here
 DISCORD_WEBHOOK=https://discord.com/api/webhooks/...
 
-# Cấu hình global
-WORK_DIR=/opt/projects
+# Cấu hình global (chỉ cần cho non-Docker projects)
+# WORK_DIR=/path/to/your/project
 
 # Cấu hình per-project
 DEPLOY_COMMANDS_OWNER_REPO_NAME=command1;command2;command3
