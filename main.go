@@ -39,6 +39,36 @@ type WebhookPayload struct {
 		URL     string `json:"url"`
 	} `json:"head_commit"`
 	Ref string `json:"ref"`
+
+	// Support for GitHub Package Events (chuẩn)
+	Package struct {
+		Name     string `json:"name"`
+		Version  string `json:"package_version"`
+		Registry struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+			URL  string `json:"url"`
+		} `json:"registry"`
+	} `json:"package"`
+	Action string `json:"action"` // "published" for package events
+
+	// Support for Custom Workflow Payload (GitHub Actions)
+	Docker struct {
+		Registry       string `json:"registry"`
+		ImageName      string `json:"image_name"`
+		LatestTag      string `json:"latest_tag"`
+		VersionedTag   string `json:"versioned_tag"`
+		LatestImage    string `json:"latest_image"`
+		VersionedImage string `json:"versioned_image"`
+		PullCommand    string `json:"pull_command"`
+	} `json:"docker"`
+
+	Deployment struct {
+		Environment string `json:"environment"`
+		Branch      string `json:"branch"`
+		Commit      string `json:"commit"`
+		Timestamp   string `json:"timestamp"`
+	} `json:"deployment"`
 }
 
 type DiscordMessage struct {
@@ -160,12 +190,39 @@ func deployHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Received webhook for repository: %s, ref: %s", payload.Repository.FullName, payload.Ref)
+	// Get event type from header
+	eventType := r.Header.Get("X-GitHub-Event")
+
+	// Detect payload type and handle accordingly
+	var payloadType string
+	if payload.Docker.ImageName != "" && payload.Deployment.Environment != "" {
+		// Custom Workflow Payload (từ GitHub Actions)
+		payloadType = "workflow"
+		log.Printf("Received workflow webhook for repository: %s, environment: %s, image: %s",
+			payload.Repository.FullName, payload.Deployment.Environment, payload.Docker.LatestImage)
+	} else if eventType == "package" && payload.Action == "published" {
+		// GitHub Package Events (chuẩn)
+		payloadType = "package"
+		log.Printf("Received package webhook for repository: %s, package: %s@%s",
+			payload.Repository.FullName, payload.Package.Name, payload.Package.Version)
+	} else if eventType == "push" || payload.Ref != "" {
+		// GitHub Push Events (chuẩn)
+		payloadType = "push"
+		log.Printf("Received push webhook for repository: %s, ref: %s", payload.Repository.FullName, payload.Ref)
+	} else {
+		log.Printf("Unknown payload type for repository: %s", payload.Repository.FullName)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":  "ignored",
+			"message": "Unknown payload type",
+		})
+		return
+	}
 
 	// Execute deployment (asynchronously)
 	go func() {
 		deploySuccess := executeDeployment(payload)
-		sendDiscordNotification(payload, deploySuccess)
+		sendDiscordNotification(payload, deploySuccess, payloadType)
 	}()
 
 	// Return immediate response
@@ -174,6 +231,7 @@ func deployHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{
 		"status":  "accepted",
 		"message": "Deployment initiated",
+		"type":    payloadType,
 	})
 }
 
@@ -242,8 +300,37 @@ func checkSignature(payload []byte, signature, secret string) bool {
 func executeDeployment(payload WebhookPayload) bool {
 	log.Printf("Starting deployment for %s", payload.Repository.FullName)
 
-	// Get deployment commands based on project type
+	// Get deployment commands based on project type and payload
 	commands := getDeploymentCommands(payload.Repository.FullName)
+
+	// If it's a workflow payload with Docker info, use Docker pull command
+	if payload.Docker.ImageName != "" && payload.Docker.PullCommand != "" {
+		log.Printf("Detected workflow payload with Docker info")
+
+		// Use custom Docker commands for workflow payloads
+		dockerCommands := []string{
+			payload.Docker.PullCommand,
+			fmt.Sprintf("docker stop %s || true", payload.Docker.ImageName),
+			fmt.Sprintf("docker rm %s || true", payload.Docker.ImageName),
+		}
+
+		// Add run command based on environment
+		var runCommand string
+		if payload.Deployment.Environment == "production" {
+			runCommand = fmt.Sprintf("docker run -d --name %s -p 8100:8100 %s",
+				payload.Docker.ImageName, payload.Docker.LatestImage)
+		} else {
+			runCommand = fmt.Sprintf("docker run -d --name %s-staging -p 8101:8100 %s",
+				payload.Docker.ImageName, payload.Docker.LatestImage)
+		}
+		dockerCommands = append(dockerCommands, runCommand)
+
+		// Use Docker commands if available, otherwise fall back to configured commands
+		if len(dockerCommands) > 0 {
+			commands = dockerCommands
+			log.Printf("Using Docker commands from workflow payload")
+		}
+	}
 
 	if len(commands) == 0 {
 		log.Printf("No deployment commands configured for %s", payload.Repository.FullName)
@@ -458,7 +545,7 @@ func getServiceName(repoName, defaultName string) string {
 	return defaultName
 }
 
-func sendDiscordNotification(payload WebhookPayload, success bool) {
+func sendDiscordNotification(payload WebhookPayload, success bool, payloadType string) {
 	log.Printf("Sending Discord notification...")
 
 	color := 0x00ff00 // Green for success
@@ -468,11 +555,69 @@ func sendDiscordNotification(payload WebhookPayload, success bool) {
 		status = "❌ Deployment Failed"
 	}
 
-	embed := DiscordMessageEmbed{
-		Title:       status,
-		Description: fmt.Sprintf("Repository: **%s**", payload.Repository.FullName),
-		Color:       color,
-		Fields: []DiscordMessageEmbedField{
+	var fields []DiscordMessageEmbedField
+	var title string
+
+	// Handle different payload types
+	if payloadType == "package" {
+		// GitHub Package Events
+		title = fmt.Sprintf("%s - Package Deployment", status)
+		fields = []DiscordMessageEmbedField{
+			{
+				Name:   "Package",
+				Value:  payload.Package.Name,
+				Inline: true,
+			},
+			{
+				Name:   "Version",
+				Value:  payload.Package.Version,
+				Inline: true,
+			},
+			{
+				Name:   "Registry",
+				Value:  payload.Package.Registry.Type,
+				Inline: true,
+			},
+		}
+	} else if payloadType == "workflow" {
+		// Custom Workflow Payload (GitHub Actions)
+		title = fmt.Sprintf("%s - Workflow Deployment", status)
+		fields = []DiscordMessageEmbedField{
+			{
+				Name:   "Environment",
+				Value:  payload.Deployment.Environment,
+				Inline: true,
+			},
+			{
+				Name:   "Branch",
+				Value:  payload.Deployment.Branch,
+				Inline: true,
+			},
+			{
+				Name:   "Commit",
+				Value:  payload.Deployment.Commit[:7],
+				Inline: true,
+			},
+			{
+				Name:   "Docker Image",
+				Value:  payload.Docker.LatestImage,
+				Inline: false,
+			},
+			{
+				Name:   "Registry",
+				Value:  payload.Docker.Registry,
+				Inline: true,
+			},
+			{
+				Name:   "Tags",
+				Value:  fmt.Sprintf("latest: %s\nversioned: %s", payload.Docker.LatestTag, payload.Docker.VersionedTag),
+				Inline: true,
+			},
+		}
+	} else {
+		// GitHub Push Events
+		title = fmt.Sprintf("%s - Code Deployment", status)
+		fields = []DiscordMessageEmbedField{
 			{
 				Name:   "Branch",
 				Value:  strings.Replace(payload.Ref, "refs/heads/", "", 1),
@@ -493,7 +638,14 @@ func sendDiscordNotification(payload WebhookPayload, success bool) {
 				Value:  payload.HeadCommit.Message,
 				Inline: false,
 			},
-		},
+		}
+	}
+
+	embed := DiscordMessageEmbed{
+		Title:       title,
+		Description: fmt.Sprintf("Repository: **%s**", payload.Repository.FullName),
+		Color:       color,
+		Fields:      fields,
 		Footer: &DiscordMessageEmbedFooter{
 			Text: "Auto Deploy Webhook",
 		},
