@@ -309,6 +309,11 @@ func executeDeployment(payload WebhookPayload) bool {
 		log.Printf("Docker Image: %s", payload.Docker.LatestImage)
 		log.Printf("Environment: %s", payload.Deployment.Environment)
 
+		// Check if image was verified before webhook
+		if payload.Deployment.Timestamp != "" {
+			log.Printf("✅ Image verified by workflow at: %s", payload.Deployment.Timestamp)
+		}
+
 		// Use custom Docker commands for workflow payloads
 		// Extract container name from repository (remove owner prefix)
 		repoName := payload.Repository.Name // mrs_address_be

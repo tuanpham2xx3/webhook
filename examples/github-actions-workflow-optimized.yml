@@ -1,0 +1,200 @@
+# GitHub Actions Workflow - OPTIMIZED VERSION
+# File: .github/workflows/deploy.yml
+# Ensures Docker image is built BEFORE webhook deployment
+
+name: Build and Deploy via Webhook
+
+on:
+  push:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+
+      # STEP 1: BUILD AND PUSH DOCKER IMAGE FIRST
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # STEP 2: VERIFY IMAGE IS AVAILABLE
+      - name: Verify Docker image availability
+        run: |
+          echo "🔍 Verifying Docker image is available..."
+          
+          # Extract the main tag
+          MAIN_TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
+          echo "Checking image: $MAIN_TAG"
+          
+          # Try to pull the image to verify it's available
+          for i in {1..5}; do
+            if docker pull "$MAIN_TAG"; then
+              echo "✅ Image verified successfully!"
+              break
+            else
+              echo "⏳ Attempt $i/5 failed, waiting 10 seconds..."
+              sleep 10
+            fi
+            
+            if [ $i -eq 5 ]; then
+              echo "❌ Failed to verify image after 5 attempts"
+              exit 1
+            fi
+          done
+
+      # STEP 3: PREPARE WEBHOOK PAYLOAD
+      - name: Prepare deployment payload
+        id: payload
+        run: |
+          # Determine environment based on branch
+          if [ "${{ github.ref_name }}" == "main" ]; then
+            ENVIRONMENT="production"
+          else
+            ENVIRONMENT="staging"
+          fi
+          
+          # Extract image details
+          COMMIT_SHA="${{ github.sha }}"
+          SHORT_SHA="${COMMIT_SHA:0:7}"
+          BRANCH_NAME="${{ github.ref_name }}"
+          VERSIONED_TAG="${BRANCH_NAME}-${SHORT_SHA}"
+          MAIN_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BRANCH_NAME}"
+          
+          # Create payload JSON
+          cat > payload.json << EOF
+          {
+            "ref": "${{ github.ref }}",
+            "repository": {
+              "name": "${{ github.event.repository.name }}",
+              "full_name": "${{ github.repository }}",
+              "html_url": "${{ github.event.repository.html_url }}"
+            },
+            "pusher": {
+              "name": "${{ github.actor }}",
+              "email": "${{ github.event.pusher.email || github.actor }}@users.noreply.github.com"
+            },
+            "head_commit": {
+              "id": "${COMMIT_SHA}",
+              "message": "${{ github.event.head_commit.message || 'Manual deployment' }}",
+              "url": "${{ github.event.head_commit.url || github.event.repository.html_url }}/commit/${COMMIT_SHA}"
+            },
+            "docker": {
+              "registry": "${{ env.REGISTRY }}",
+              "image_name": "${{ github.event.repository.name }}",
+              "latest_tag": "${BRANCH_NAME}",
+              "versioned_tag": "${VERSIONED_TAG}",
+              "latest_image": "${MAIN_IMAGE}",
+              "versioned_image": "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSIONED_TAG}",
+              "pull_command": "docker pull ${MAIN_IMAGE}"
+            },
+            "deployment": {
+              "environment": "${ENVIRONMENT}",
+              "branch": "${BRANCH_NAME}",
+              "commit": "${COMMIT_SHA}",
+              "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+              "verified": true
+            }
+          }
+          EOF
+          
+          echo "payload<<EOF" >> $GITHUB_OUTPUT
+          cat payload.json >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      # STEP 4: SEND WEBHOOK ONLY AFTER IMAGE IS VERIFIED
+      - name: Send webhook notification
+        env:
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+          PAYLOAD: ${{ steps.payload.outputs.payload }}
+        run: |
+          echo "🚀 Sending webhook notification..."
+          echo "📦 Image verified and ready for deployment"
+          
+          # Generate HMAC SHA256 signature
+          SIGNATURE=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" | cut -d' ' -f2)
+          
+          # Send webhook request
+          HTTP_CODE=$(curl -X POST "$WEBHOOK_URL/deploy" \
+            -H "Content-Type: application/json" \
+            -H "X-Hub-Signature-256: sha256=$SIGNATURE" \
+            -H "X-GitHub-Event: workflow_run" \
+            -H "X-GitHub-Delivery: ${{ github.run_id }}" \
+            -H "User-Agent: GitHub-Actions/${{ github.run_id }}" \
+            -d "$PAYLOAD" \
+            -w "%{http_code}" \
+            -s -o response.txt)
+          
+          echo "Response code: $HTTP_CODE"
+          echo "Response body:"
+          cat response.txt
+          
+          if [ "$HTTP_CODE" -eq 200 ]; then
+            echo "✅ Webhook sent successfully!"
+          else
+            echo "❌ Webhook failed with code: $HTTP_CODE"
+            exit 1
+          fi
+
+      # STEP 5: DEPLOYMENT SUMMARY
+      - name: Deployment summary
+        run: |
+          echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | ✅ Success |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ github.ref_name == 'main' && 'Production' || 'Staging' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Webhook | ✅ Sent |" >> $GITHUB_STEP_SUMMARY
+
+# Required GitHub Secrets:
+# WEBHOOK_URL - URL của webhook server (ví dụ: https://webhook.yourdomain.com)
+# WEBHOOK_SECRET - Secret để verify signature (phải giống với WEBHOOK_SECRET trên server)
+
+# Workflow Process:
+# 1. ✅ Build Docker image và push lên registry
+# 2. ✅ Verify image đã available (retry 5 lần nếu cần)
+# 3. ✅ Prepare webhook payload với thông tin Docker
+# 4. ✅ Send webhook chỉ KHI image đã sẵn sàng
+# 5. ✅ Webhook server pull image mới và deploy 
