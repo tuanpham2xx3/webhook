@@ -312,8 +312,8 @@ func executeDeployment(payload WebhookPayload) bool {
 		// Use custom Docker commands for workflow payloads
 		dockerCommands := []string{
 			payload.Docker.PullCommand,
-			fmt.Sprintf("docker stop %s || true", payload.Docker.ImageName),
-			fmt.Sprintf("docker rm %s || true", payload.Docker.ImageName),
+			fmt.Sprintf("docker stop %s", payload.Docker.ImageName),
+			fmt.Sprintf("docker rm %s", payload.Docker.ImageName),
 		}
 
 		// Add run command based on environment
@@ -389,8 +389,16 @@ func executeDeployment(payload WebhookPayload) bool {
 		output, err := execCmd.CombinedOutput()
 
 		if err != nil {
-			log.Printf("Command failed: %s, Error: %v, Output: %s", cmd, err, string(output))
-			return false
+			// Some Docker commands are expected to fail (like stopping non-existent containers)
+			isDockerStopOrRm := strings.Contains(cmd, "docker stop") || strings.Contains(cmd, "docker rm")
+			isContainerNotFound := strings.Contains(string(output), "No such container")
+
+			if isDockerStopOrRm && isContainerNotFound {
+				log.Printf("Command failed (expected): %s - Container doesn't exist, continuing...", cmd)
+			} else {
+				log.Printf("Command failed: %s, Error: %v, Output: %s", cmd, err, string(output))
+				return false
+			}
 		}
 
 		log.Printf("Command successful: %s", cmd)
