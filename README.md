@@ -41,6 +41,8 @@ DEPLOY_COMMANDS_OWNER_REPO_NAME=command1;command2;command3
 WORK_DIR_OWNER_REPO_NAME=/path/to/working/directory
 ```
 
+**Note**: For Docker workflows (GitHub Actions with container registry), working directories are not needed. The webhook will automatically use Docker commands from the payload.
+
 ### Example Configuration
 
 For a repository `company/go-api`:

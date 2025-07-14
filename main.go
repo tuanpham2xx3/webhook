@@ -304,8 +304,10 @@ func executeDeployment(payload WebhookPayload) bool {
 	commands := getDeploymentCommands(payload.Repository.FullName)
 
 	// If it's a workflow payload with Docker info, use Docker pull command
-	if payload.Docker.ImageName != "" && payload.Docker.PullCommand != "" {
+	if payload.Docker.ImageName != "" && payload.Docker.PullCommand != "" && payload.Docker.LatestImage != "" {
 		log.Printf("Detected workflow payload with Docker info")
+		log.Printf("Docker Image: %s", payload.Docker.LatestImage)
+		log.Printf("Environment: %s", payload.Deployment.Environment)
 
 		// Use custom Docker commands for workflow payloads
 		dockerCommands := []string{
@@ -330,6 +332,9 @@ func executeDeployment(payload WebhookPayload) bool {
 			commands = dockerCommands
 			log.Printf("Using Docker commands from workflow payload")
 		}
+	} else if payload.Docker.ImageName != "" || payload.Docker.PullCommand != "" {
+		log.Printf("Incomplete Docker payload info - ImageName: '%s', PullCommand: '%s', LatestImage: '%s'",
+			payload.Docker.ImageName, payload.Docker.PullCommand, payload.Docker.LatestImage)
 	}
 
 	if len(commands) == 0 {
@@ -337,22 +342,48 @@ func executeDeployment(payload WebhookPayload) bool {
 		return false
 	}
 
-	// Change to project directory if specified
-	workingDir := getWorkingDirectory(payload.Repository.FullName)
+	// For Docker workflows, we don't need working directories - Docker handles everything
+	var workingDir string
+
+	// Check if we're using Docker workflow (from GitHub Actions)
+	if payload.Docker.ImageName != "" && payload.Docker.PullCommand != "" && payload.Docker.LatestImage != "" {
+		log.Printf("Using Docker workflow - no working directory needed")
+	} else {
+		// Only use working directory for non-Docker deployments
+		workingDir = getWorkingDirectory(payload.Repository.FullName)
+
+		// Verify working directory exists before using it
+		if workingDir != "" {
+			if _, err := os.Stat(workingDir); os.IsNotExist(err) {
+				log.Printf("Warning: Working directory %s does not exist, continuing without changing directory", workingDir)
+				workingDir = "" // Reset to empty so we don't use it
+			} else {
+				log.Printf("Using working directory: %s", workingDir)
+			}
+		}
+	}
 
 	for _, cmd := range commands {
+		// Trim whitespace and skip empty commands
+		cmd = strings.TrimSpace(cmd)
+		if cmd == "" {
+			continue
+		}
+
 		log.Printf("Executing: %s", cmd)
 
-		parts := strings.Split(cmd, " ")
+		parts := strings.Fields(cmd) // Use Fields instead of Split for better whitespace handling
 		if len(parts) == 0 {
+			log.Printf("Skipping empty command")
 			continue
 		}
 
 		execCmd := exec.Command(parts[0], parts[1:]...)
 
-		// Set working directory if specified
+		// Set working directory if specified and exists (only for non-Docker workflows)
 		if workingDir != "" {
 			execCmd.Dir = workingDir
+			log.Printf("Running in directory: %s", workingDir)
 		}
 
 		output, err := execCmd.CombinedOutput()
@@ -363,7 +394,11 @@ func executeDeployment(payload WebhookPayload) bool {
 		}
 
 		log.Printf("Command successful: %s", cmd)
-		log.Printf("Output: %s", string(output))
+		if len(output) > 0 {
+			log.Printf("Output: %s", string(output))
+		} else {
+			log.Printf("Command completed with no output")
+		}
 	}
 
 	log.Printf("Deployment completed successfully for %s", payload.Repository.FullName)
